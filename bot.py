@@ -36,33 +36,43 @@ def get_username(update: Update) -> str:
 
 def parse_expense_with_ai(text: str, sender: str) -> dict | None:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    prompt = f"""Analizá este mensaje de un chat de finanzas del hogar y extraé el gasto si hay uno.
+    prompt = f"""Analiza este mensaje de un chat de finanzas del hogar y extrae el gasto si hay uno.
 
 Mensaje: "{text}"
 Enviado por: {sender}
 
-Respondé SOLO con JSON valido, sin texto extra, sin markdown, sin explicaciones.
-Si hay un gasto respondé exactamente asi:
+Responde SOLO con JSON valido, sin texto extra, sin markdown, sin explicaciones, sin backticks.
+Si hay un gasto responde exactamente asi:
 {{"es_gasto": true, "descripcion": "descripcion corta", "monto": 1234, "quien_pago": "{sender}", "categoria": "Comida"}}
 
 Las categorias posibles son: Comida, Servicios, Transporte, Salud, Salidas, Hogar, Otros
 
-Si NO es un gasto respondé exactamente:
+Si NO es un gasto responde exactamente:
 {{"es_gasto": false}}
 
 Reglas:
 - monto es siempre un numero entero sin simbolos
 - Si dice "yo" quien_pago es {sender}
 - Si no dice quien pago, asumir {sender}
-- Si menciona a Lucas o Serri, asignarlo a esa persona"""
+- Si menciona a Lucas o Serri, asignarlo a esa persona
+- NO uses backticks ni markdown en tu respuesta"""
 
     response = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=200,
-        messages=[{"role": "user", "content": prompt}]
+        model="claude-haiku-4-5-20251001",
+        max_tokens=500,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            },
+            {
+                "role": "assistant",
+                "content": "{"
+            }
+        ]
     )
 
-    raw = response.content[0].text.strip()
+    raw = "{" + response.content[0].text.strip()
     logger.info(f"Claude respondio: {raw}")
 
     raw = re.sub(r"```json|```", "", raw).strip()
