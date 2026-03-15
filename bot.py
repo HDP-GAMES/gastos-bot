@@ -41,51 +41,52 @@ def parse_expense_with_ai(text: str, sender: str) -> dict | None:
 Mensaje: "{text}"
 Enviado por: {sender}
 
-Respondé SOLO con JSON válido, sin texto extra. Si hay un gasto, respondé:
-{{
-  "es_gasto": true,
-  "descripcion": "descripción corta del gasto",
-  "monto": 1234,
-  "quien_pago": "{sender}",
-  "categoria": "una de: Comida, Servicios, Transporte, Salud, Salidas, Hogar, Otros"
-}}
+Respondé SOLO con JSON valido, sin texto extra, sin markdown, sin explicaciones.
+Si hay un gasto respondé exactamente asi:
+{{"es_gasto": true, "descripcion": "descripcion corta", "monto": 1234, "quien_pago": "{sender}", "categoria": "Comida"}}
 
-Si NO es un gasto (es una pregunta, comentario, saludo, etc), respondé:
+Las categorias posibles son: Comida, Servicios, Transporte, Salud, Salidas, Hogar, Otros
+
+Si NO es un gasto respondé exactamente:
 {{"es_gasto": false}}
 
 Reglas:
-- El monto siempre es número sin símbolos ni puntos
-- Si el mensaje dice "yo" o "yo pagué", quien_pago es {sender}
-- Si menciona el nombre de la otra persona, asignáselo a esa persona
-- Si no menciona quién pagó, asumir que pagó {sender}
-- Moneda: pesos uruguayos"""
+- monto es siempre un numero entero sin simbolos
+- Si dice "yo" quien_pago es {sender}
+- Si no dice quien pago, asumir {sender}
+- Si menciona a Lucas o Serri, asignarlo a esa persona"""
 
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=300,
+        max_tokens=200,
         messages=[{"role": "user", "content": prompt}]
     )
-    
+
     raw = response.content[0].text.strip()
+    logger.info(f"Claude respondio: {raw}")
+
     raw = re.sub(r"```json|```", "", raw).strip()
+    json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if json_match:
+        return json.loads(json_match.group())
     return json.loads(raw)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
-    
+
     text = update.message.text
     sender = get_username(update)
-    
+
     if text.startswith("/"):
         return
 
     try:
         result = parse_expense_with_ai(text, sender)
-        
+
         if not result or not result.get("es_gasto"):
             return
-        
+
         sheet = get_sheet()
         fecha = datetime.now().strftime("%d/%m/%Y")
         row = [
@@ -97,7 +98,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text
         ]
         sheet.append_row(row)
-        
+
         await update.message.reply_text(
             f"✓ {result['descripcion']} — ${result['monto']:,} ({result['categoria']}) pagado por {result['quien_pago']}"
         )
@@ -108,36 +109,34 @@ async def resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         sheet = get_sheet()
         rows = sheet.get_all_records()
-        
+
         if not rows:
-            await update.message.reply_text("Todavía no hay gastos cargados este mes.")
+            await update.message.reply_text("Todavia no hay gastos cargados.")
             return
 
         now = datetime.now()
         mes_actual = now.strftime("%m/%Y")
-        
+
         args = context.args
         if args and args[0].lower() in ["todo", "all"]:
             gastos = rows
             titulo = "todos los gastos"
         else:
             gastos = [r for r in rows if str(r.get("fecha", "")).endswith(mes_actual)]
-            titulo = f"este mes ({now.strftime('%B %Y')})"
+            titulo = f"este mes ({now.strftime('%m/%Y')})"
 
         if not gastos:
             await update.message.reply_text(f"No hay gastos cargados {titulo}.")
             return
 
         total = sum(float(str(r["monto"]).replace(",", "")) for r in gastos)
-        
         lucas_total = sum(float(str(r["monto"]).replace(",", "")) for r in gastos if r["quien_pago"] == LUCAS)
         serri_total = sum(float(str(r["monto"]).replace(",", "")) for r in gastos if r["quien_pago"] == SERRI)
-        
-        mitad = total / 2
+
         diff = lucas_total - serri_total
-        
+
         if abs(diff) < 1:
-            balance_txt = "Están 50/50 ✓"
+            balance_txt = "Estan 50/50 ✓"
         elif diff > 0:
             balance_txt = f"Serri le debe a Lucas: ${diff/2:,.0f}"
         else:
@@ -150,18 +149,18 @@ async def resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cats_sorted = sorted(cats.items(), key=lambda x: x[1], reverse=True)
         cats_txt = "\n".join(f"  {cat}: ${monto:,.0f}" for cat, monto in cats_sorted)
 
-        msg = f"""📊 Resumen {titulo}
+        msg = f"""Resumen {titulo}
 
-💰 Total gastado: ${total:,.0f}
-👤 {LUCAS}: ${lucas_total:,.0f}
-👤 {SERRI}: ${serri_total:,.0f}
+Total: ${total:,.0f}
+{LUCAS}: ${lucas_total:,.0f}
+{SERRI}: ${serri_total:,.0f}
 
-⚖️ {balance_txt}
+{balance_txt}
 
-📂 Por categoría:
+Por categoria:
 {cats_txt}
 
-📝 {len(gastos)} gastos registrados"""
+{len(gastos)} gastos registrados"""
 
         await update.message.reply_text(msg)
 
@@ -178,26 +177,26 @@ async def borrar_ultimo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         last = rows[-1]
         sheet.delete_rows(len(rows))
-        await update.message.reply_text(f"🗑 Borrado: {last[2]} — ${last[3]} ({last[1]})")
+        await update.message.reply_text(f"Borrado: {last[2]} — ${last[3]} ({last[1]})")
     except Exception as e:
         logger.error(f"Error borrando: {e}")
         await update.message.reply_text("Hubo un error al borrar.")
 
 async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = """🤖 Comandos disponibles:
+    msg = """Comandos:
 
-/resumen — resumen del mes actual
-/resumen todo — todos los gastos históricos
-/borrar — borra el último gasto cargado
-/ayuda — muestra este mensaje
+/resumen — resumen del mes
+/resumen todo — historico completo
+/borrar — borra el ultimo gasto
+/ayuda — este mensaje
 
-Para cargar un gasto, simplemente escribí en el chat:
-• "super $1200"
-• "cena $800 Serri"  
-• "luz $2300"
-• "farmacia $450 yo"
+Para cargar un gasto escribi cualquier cosa natural:
+"fui al super, gaste 1200"
+"pague la luz 2300"
+"cena con amigos $800 Serri"
+"farmacia 450"
 
-El bot detecta automáticamente quién pagó y la categoría."""
+El bot detecta automaticamente quien pago y la categoria."""
     await update.message.reply_text(msg)
 
 def main():
